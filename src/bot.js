@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 8447)
-Total output lines: 791
-
 require('dotenv').config();
 
 const {
@@ -348,7 +345,118 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.isChatInputCommand() && interaction.commandName === 'atribuir') {
     if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
-      await interaction.reply({ content: 'Você precisa da permissão **Gerenciar mensagens** para…1447 tokens truncated…ord.userId, record.assignedTo || '']
+      await interaction.reply({ content: 'Você precisa da permissão **Gerenciar mensagens** para atribuir correções.', ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const protocol = interaction.options.getString('protocolo', true);
+      const responsible = interaction.options.getUser('responsavel', true);
+      const { record, ambiguous } = findByProtocol(await getRecords(), protocol);
+      if (ambiguous) {
+        await interaction.editReply('Esse protocolo não é único. Consulte a lista e use o protocolo completo exibido.');
+        return;
+      }
+      if (!record) {
+        await interaction.editReply('Não encontrei uma solicitação com esse protocolo.');
+        return;
+      }
+      const result = await assignRecord(record.id, responsible.id, interaction.user.id, true);
+      if (result.notPending) {
+        await interaction.editReply('Só é possível atribuir solicitações pendentes.');
+        return;
+      }
+      const cardUpdated = await syncRecordCard(result.record);
+      await interaction.editReply(`A correção **${getProtocol(result.record)}** foi atribuída a <@${responsible.id}>.${cardUpdated === false ? ' O registro foi salvo, mas o card não foi atualizado; confira as permissões do bot.' : ''}`);
+    } catch (error) {
+      console.error('Não foi possível atribuir a correção:', error);
+      await interaction.editReply('Não consegui atribuir essa correção. Tente novamente.');
+    }
+    return;
+  }
+
+  if (interaction.isChatInputCommand() && interaction.commandName === 'reabrir') {
+    if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
+      await interaction.reply({ content: 'Você precisa da permissão **Gerenciar mensagens** para reabrir correções.', ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const protocol = interaction.options.getString('protocolo', true);
+      const reason = interaction.options.getString('motivo', true).trim();
+      const { record, ambiguous } = findByProtocol(await getRecords(), protocol);
+      if (ambiguous) {
+        await interaction.editReply('Esse protocolo não é único. Consulte a lista e use o protocolo completo exibido.');
+        return;
+      }
+      if (!record) {
+        await interaction.editReply('Não encontrei uma solicitação com esse protocolo.');
+        return;
+      }
+      if ((record.status || 'pendente') === 'pendente') {
+        await interaction.editReply('Essa solicitação já está pendente.');
+        return;
+      }
+      const updated = await updateRecordStatus(record.id, 'pendente', interaction.user.id, reason);
+      const cardUpdated = await syncRecordCard(updated);
+      await interaction.editReply(`A correção **${getProtocol(updated)}** voltou para a fila.${cardUpdated === false ? ' O registro foi salvo, mas o card não foi atualizado; confira as permissões do bot.' : ''}`);
+    } catch (error) {
+      console.error('Não foi possível reabrir a correção:', error);
+      await interaction.editReply('Não consegui reabrir essa correção. Tente novamente.');
+    }
+    return;
+  }
+
+  if (interaction.isChatInputCommand() && interaction.commandName === 'cancelar') {
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const protocol = interaction.options.getString('protocolo', true);
+      const reason = interaction.options.getString('motivo')?.trim();
+      const { record, ambiguous } = findByProtocol(await getRecords(), protocol);
+      if (ambiguous) {
+        await interaction.editReply('Esse protocolo não é único. Use o protocolo completo exibido no seu histórico.');
+        return;
+      }
+      if (!record) {
+        await interaction.editReply('Não encontrei uma solicitação com esse protocolo.');
+        return;
+      }
+      const result = await cancelRecord(record.id, interaction.user.id, reason);
+      if (result.outcome === 'not_owner') {
+        await interaction.editReply('Você só pode cancelar uma solicitação que enviou.');
+        return;
+      }
+      if (result.outcome === 'not_pending') {
+        await interaction.editReply('Só é possível cancelar solicitações pendentes.');
+        return;
+      }
+      if (result.outcome !== 'cancelled') {
+        await interaction.editReply('Não encontrei essa solicitação.');
+        return;
+      }
+      await syncRecordCard(result.record);
+      await interaction.editReply(`A solicitação **${getProtocol(result.record)}** foi cancelada.`);
+    } catch (error) {
+      console.error('Não foi possível cancelar a solicitação:', error);
+      await interaction.editReply('Não consegui cancelar essa solicitação. Tente novamente.');
+    }
+    return;
+  }
+
+  if (interaction.isChatInputCommand() && interaction.commandName === 'buscar') {
+    if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
+      await interaction.reply({ content: 'Você precisa da permissão **Gerenciar mensagens** para buscar correções.', ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const term = interaction.options.getString('termo', true).trim().toLocaleLowerCase('pt-BR');
+      const requestedStatus = interaction.options.getString('status');
+      const responsible = interaction.options.getUser('responsavel');
+      const matches = (await getRecords())
+        .filter((record) => !requestedStatus || (record.status || 'pendente') === requestedStatus)
+        .filter((record) => !responsible || record.assignedTo === responsible.id)
+        .filter((record) => [getProtocol(record), record.cliente, record.atividade, record.resumo, record.userId, record.assignedTo || '']
           .some((value) => String(value).toLocaleLowerCase('pt-BR').includes(term)))
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       if (matches.length === 0) {
@@ -680,4 +788,3 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.login(DISCORD_TOKEN);
-
