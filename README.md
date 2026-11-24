@@ -45,7 +45,7 @@ Ao enviar, os dados são salvos em `data/correcoes.json` e organizados em um emb
 
 O Railway detecta Node.js pelo `package.json` e usa `npm start` como comando de inicialização. O plano gratuito tem limite mensal de uso; acompanhe a cota no painel.
 
-Sempre que adicionar ou alterar comandos, rode `npm run deploy` novamente. O arquivo de solicitações fica no computador/servidor onde o bot está rodando; mantenha cópias de segurança se precisar preservar os registros.
+A Railway executa `npm run deploy` antes de iniciar o bot para sincronizar os comandos slash. Localmente, rode `npm run deploy` sempre que alterar comandos. O arquivo de solicitações fica no computador/servidor onde o bot está rodando; mantenha cópias de segurança se precisar preservar os registros.
 
 ## Comandos da equipe e protocolos
 
