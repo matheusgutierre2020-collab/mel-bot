@@ -33,51 +33,6 @@ const statusLabels = {
   negada: 'Negada',
   cancelada: 'Cancelada',
 };
-const clienteForms = new Map();
-
-function createClienteModal(stage, formId) {
-  const modal = new ModalBuilder()
-    .setCustomId(`cliente:${stage}:${formId}`)
-    .setTitle(stage === 'etapa1' ? 'Cadastro de cliente (1/2)' : 'Cadastro de cliente (2/2)');
-  const definitions = stage === 'etapa1'
-    ? [
-      ['codigo', 'Código do cliente', 'Código identificador', true, 100],
-      ['fantasia', 'Nome fantasia', 'Nome fantasia do cliente', true, 100],
-      ['cnpj', 'CNPJ', 'Somente números ou com pontuação', true, 30],
-      ['web', 'Web do cliente (opcional)', 'https://exemplo.com.br', false, 300],
-      ['nuvem', 'Cliente Nuvem? SIM ou NÃO', 'SIM ou NÃO', false, 10],
-    ]
-    : [
-      ['concentrador', 'Usa concentrador? SIM ou NÃO', 'SIM ou NÃO', false, 10],
-      ['migrate', 'Usa Migrate? SIM ou NÃO', 'SIM ou NÃO', false, 10],
-      ['cidadeEstado', 'Cidade e Estado (opcional)', 'Ex.: São Paulo - SP', false, 100],
-      ['tecnico', 'Técnico responsável', 'Nome do técnico responsável', true, 100],
-    ];
-
-  modal.addComponents(...definitions.map(([id, label, placeholder, required, maxLength]) => {
-    const input = new TextInputBuilder()
-      .setCustomId(id)
-      .setLabel(label)
-      .setPlaceholder(placeholder)
-      .setStyle(TextInputStyle.Short)
-      .setMaxLength(maxLength)
-      .setRequired(required);
-    return new ActionRowBuilder().addComponents(input);
-  }));
-  return modal;
-}
-
-function optionalValue(value) {
-  return value?.trim() || 'Não informado';
-}
-
-function normalizeYesNo(value, label) {
-  if (!value?.trim()) return 'Não informado';
-  const normalized = value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  if (normalized === 'sim') return 'Sim';
-  if (normalized === 'nao') return 'Não';
-  throw new Error(`O campo "${label}" deve ser preenchido com SIM ou NÃO.`);
-}
 
 function getProtocol(record) {
   return record.id.replaceAll('-', '').slice(0, 10).toUpperCase();
@@ -300,7 +255,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .setTitle('Ajuda do bot de correções')
       .setDescription('Os comandos marcados com 🔒 exigem a permissão **Gerenciar mensagens**. Use o protocolo de 10 caracteres mostrado nos cards e nas listas.')
       .addFields(
-        { name: '/cliente', value: 'Abrir o formulário para cadastrar um cliente e publicar um embed no canal.' },
         { name: '/correcao', value: 'Abrir o formulário e registrar uma nova solicitação.' },
         { name: '/minhas-correcoes [status]', value: 'Listar suas solicitações; opcionalmente filtrar por status.' },
         { name: '/cancelar protocolo [motivo]', value: 'Cancelar uma solicitação sua que ainda esteja pendente.' },
@@ -315,116 +269,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         { name: '/ajuda', value: 'Exibir esta lista de comandos.' },
       );
     await interaction.reply({ embeds: [help], ephemeral: true });
-    return;
-  }
-
-  if (interaction.isChatInputCommand() && interaction.commandName === 'cliente') {
-    const formId = randomUUID();
-    clienteForms.set(formId, {
-      userId: interaction.user.id,
-      channelId: interaction.channelId,
-      expiresAt: Date.now() + 15 * 60 * 1000,
-    });
-    await interaction.showModal(createClienteModal('etapa1', formId));
-    return;
-  }
-
-  if (interaction.isButton() && interaction.customId.startsWith('cliente:continuar:')) {
-    const formId = interaction.customId.split(':')[2];
-    const form = clienteForms.get(formId);
-    if (!form || form.expiresAt < Date.now()) {
-      clienteForms.delete(formId);
-      await interaction.reply({ content: 'Este formulário expirou. Use /cliente para começar novamente.', ephemeral: true });
-      return;
-    }
-    if (form.userId !== interaction.user.id) {
-      await interaction.reply({ content: 'Este formulário foi aberto por outra pessoa.', ephemeral: true });
-      return;
-    }
-    await interaction.showModal(createClienteModal('etapa2', formId));
-    return;
-  }
-
-  if (interaction.isModalSubmit() && interaction.customId.startsWith('cliente:etapa1:')) {
-    const formId = interaction.customId.split(':')[2];
-    const form = clienteForms.get(formId);
-    if (!form || form.expiresAt < Date.now() || form.userId !== interaction.user.id) {
-      clienteForms.delete(formId);
-      await interaction.reply({ content: 'Este formulário expirou. Use /cliente para começar novamente.', ephemeral: true });
-      return;
-    }
-    form.data = {
-      codigo: interaction.fields.getTextInputValue('codigo').trim(),
-      fantasia: interaction.fields.getTextInputValue('fantasia').trim(),
-      cnpj: interaction.fields.getTextInputValue('cnpj').trim(),
-      web: interaction.fields.getTextInputValue('web'),
-      nuvem: interaction.fields.getTextInputValue('nuvem'),
-    };
-    clienteForms.set(formId, form);
-    await interaction.reply({
-      content: 'Primeira etapa salva. Clique para preencher os dados restantes:',
-      components: [new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cliente:continuar:${formId}`)
-          .setLabel('Continuar cadastro')
-          .setStyle(ButtonStyle.Primary),
-      )],
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (interaction.isModalSubmit() && interaction.customId.startsWith('cliente:etapa2:')) {
-    const formId = interaction.customId.split(':')[2];
-    const form = clienteForms.get(formId);
-    if (!form || form.expiresAt < Date.now() || form.userId !== interaction.user.id || !form.data) {
-      clienteForms.delete(formId);
-      await interaction.reply({ content: 'Este formulário expirou. Use /cliente para começar novamente.', ephemeral: true });
-      return;
-    }
-
-    let concentrador;
-    let migrate;
-    try {
-      concentrador = normalizeYesNo(interaction.fields.getTextInputValue('concentrador'), 'Usa concentrador?');
-      migrate = normalizeYesNo(interaction.fields.getTextInputValue('migrate'), 'Usa Migrate?');
-      form.data.nuvem = normalizeYesNo(form.data.nuvem, 'Cliente Nuvem?');
-    } catch (error) {
-      await interaction.reply({ content: error.message, ephemeral: true });
-      return;
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      const channel = await client.channels.fetch(form.channelId);
-      if (!channel || !channel.isTextBased() || !channel.send) {
-        throw new Error('O canal original não aceita mensagens.');
-      }
-
-      const clienteEmbed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setTitle(`Cadastro do cliente: ${form.data.fantasia}`)
-        .addFields(
-          { name: 'Código do cliente', value: form.data.codigo, inline: true },
-          { name: 'Nome fantasia', value: form.data.fantasia, inline: true },
-          { name: 'CNPJ', value: form.data.cnpj, inline: true },
-          { name: 'Web do cliente', value: optionalValue(form.data.web), inline: true },
-          { name: 'Cliente Nuvem', value: form.data.nuvem, inline: true },
-          { name: 'Utiliza concentrador', value: concentrador, inline: true },
-          { name: 'Utiliza Migrate', value: migrate, inline: true },
-          { name: 'Cidade e Estado', value: optionalValue(interaction.fields.getTextInputValue('cidadeEstado')), inline: true },
-          { name: 'Técnico responsável', value: interaction.fields.getTextInputValue('tecnico').trim(), inline: true },
-        )
-        .setFooter({ text: `Cadastrado por ${interaction.user.tag}` })
-        .setTimestamp();
-
-      await channel.send({ embeds: [clienteEmbed] });
-      clienteForms.delete(formId);
-      await interaction.editReply({ content: 'Cadastro do cliente enviado no canal.' });
-    } catch (error) {
-      console.error('Não foi possível publicar o cadastro do cliente:', error);
-      await interaction.editReply({ content: 'Não consegui publicar o cadastro no canal original. Confira as permissões do bot e tente novamente.' });
-    }
     return;
   }
 
