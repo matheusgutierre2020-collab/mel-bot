@@ -14,10 +14,6 @@ const commands = [
     .setDescription('Registrar uma solicitação de correção')
     .toJSON(),
   new SlashCommandBuilder()
-    .setName('cliente')
-    .setDescription('Cadastrar um cliente com formulário')
-    .toJSON(),
-  new SlashCommandBuilder()
     .setName('minhas-correcoes')
     .setDescription('Listar suas solicitações de correção')
     .addStringOption((option) => option
@@ -170,3 +166,4 @@ main().catch((error) => {
   console.error('Falha ao registrar o comando:', error);
   process.exitCode = 1;
 });
+
