@@ -33,6 +33,69 @@ const statusLabels = {
   negada: 'Negada',
   cancelada: 'Cancelada',
 };
+const clienteForms = new Map();
+
+function createClienteModal(stage, formId) {
+  const modal = new ModalBuilder()
+    .setCustomId(`cliente:${stage}:${formId}`)
+    .setTitle(stage === 'etapa1' ? 'Cadastro de cliente (1/2)' : 'Cadastro de cliente (2/2)');
+  const definitions = stage === 'etapa1'
+    ? [
+      ['codigo', 'Código do cliente', 'Código identificador', true, 100],
+      ['fantasia', 'Nome fantasia', 'Nome fantasia do cliente', true, 100],
+      ['cnpj', 'CNPJ', 'Somente números ou com pontuação', true, 30],
+      ['web', 'Web do cliente (opcional)', 'https://exemplo.com.br', false, 300],
+      ['nuvem', 'Cliente Nuvem? SIM ou NÃO', 'SIM ou NÃO', false, 10],
+    ]
+    : [
+      ['concentrador', 'Usa concentrador? SIM ou NÃO', 'SIM ou NÃO', false, 10],
+      ['migrate', 'Usa Migrate? SIM ou NÃO', 'SIM ou NÃO', false, 10],
+      ['cidadeEstado', 'Cidade e Estado (opcional)', 'Ex.: São Paulo - SP', false, 100],
+    ];
+
+  modal.addComponents(...definitions.map(([id, label, placeholder, required, maxLength]) => {
+    const input = new TextInputBuilder()
+      .setCustomId(id)
+      .setLabel(label)
+      .setPlaceholder(placeholder)
+      .setStyle(TextInputStyle.Short)
+      .setMaxLength(maxLength)
+      .setRequired(required);
+    return new ActionRowBuilder().addComponents(input);
+  }));
+  return modal;
+}
+
+function optionalValue(value) {
+  return value?.trim() || 'Não informado';
+}
+
+function formatWebsite(value) {
+  const website = value?.trim();
+  if (!website) return null;
+
+  try {
+    const url = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`);
+    if (!['http:', 'https:'].includes(url.protocol)) return website;
+    return url.toString();
+  } catch {
+    return website;
+  }
+}
+
+function formatYesNo(value) {
+  if (value === 'Sim') return '✅ Sim';
+  if (value === 'Não') return '❌ Não';
+  return null;
+}
+
+function normalizeYesNo(value, label) {
+  if (!value?.trim()) return 'Não informado';
+  const normalized = value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (normalized === 'sim') return 'Sim';
+  if (normalized === 'nao') return 'Não';
+  throw new Error(`O campo "${label}" deve ser preenchido com SIM ou NÃO.`);
+}
 
 function getProtocol(record) {
   return record.id.replaceAll('-', '').slice(0, 10).toUpperCase();
@@ -255,6 +318,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .setTitle('Ajuda do bot de correções')
       .setDescription('Os comandos marcados com 🔒 exigem a permissão **Gerenciar mensagens**. Use o protocolo de 10 caracteres mostrado nos cards e nas listas.')
       .addFields(
+        { name: '/cliente', value: 'Abrir o formulário para cadastrar um cliente e publicar um embed no canal.' },
         { name: '/correcao', value: 'Abrir o formulário e registrar uma nova solicitação.' },
         { name: '/minhas-correcoes [status]', value: 'Listar suas solicitações; opcionalmente filtrar por status.' },
         { name: '/cancelar protocolo [motivo]', value: 'Cancelar uma solicitação sua que ainda esteja pendente.' },
@@ -269,6 +333,151 @@ client.on(Events.InteractionCreate, async (interaction) => {
         { name: '/ajuda', value: 'Exibir esta lista de comandos.' },
       );
     await interaction.reply({ embeds: [help], ephemeral: true });
+    return;
+  }
+
+  if (interaction.isChatInputCommand() && interaction.commandName === 'cliente') {
+    const formId = randomUUID();
+    clienteForms.set(formId, {
+      userId: interaction.user.id,
+      channelId: interaction.channelId,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    });
+    await interaction.showModal(createClienteModal('etapa1', formId));
+    return;
+  }
+
+  if (interaction.isButton() && interaction.customId === 'cliente:copiar-site') {
+    const siteField = interaction.message.embeds[0]?.fields.find((field) => field.name === '🌐 Site');
+    const website = siteField?.value?.trim();
+    if (!website) {
+      await interaction.reply({ content: 'Não encontrei o link do site neste cadastro.', ephemeral: true });
+      return;
+    }
+    await interaction.reply({
+      content: `Copie o link abaixo:\n\n\`\`\`\n${website}\n\`\`\``,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith('cliente:continuar:')) {
+    const formId = interaction.customId.split(':')[2];
+    const form = clienteForms.get(formId);
+    if (!form || form.expiresAt < Date.now()) {
+      clienteForms.delete(formId);
+      await interaction.reply({ content: 'Este formulário expirou. Use /cliente para começar novamente.', ephemeral: true });
+      return;
+    }
+    if (form.userId !== interaction.user.id) {
+      await interaction.reply({ content: 'Este formulário foi aberto por outra pessoa.', ephemeral: true });
+      return;
+    }
+    await interaction.showModal(createClienteModal('etapa2', formId));
+    return;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('cliente:etapa1:')) {
+    const formId = interaction.customId.split(':')[2];
+    const form = clienteForms.get(formId);
+    if (!form || form.expiresAt < Date.now() || form.userId !== interaction.user.id) {
+      clienteForms.delete(formId);
+      await interaction.reply({ content: 'Este formulário expirou. Use /cliente para começar novamente.', ephemeral: true });
+      return;
+    }
+    form.data = {
+      codigo: interaction.fields.getTextInputValue('codigo').trim(),
+      fantasia: interaction.fields.getTextInputValue('fantasia').trim(),
+      cnpj: interaction.fields.getTextInputValue('cnpj').trim(),
+      web: interaction.fields.getTextInputValue('web'),
+      nuvem: interaction.fields.getTextInputValue('nuvem'),
+    };
+    clienteForms.set(formId, form);
+    await interaction.reply({
+      content: 'Primeira etapa salva. Clique para preencher os dados restantes:',
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cliente:continuar:${formId}`)
+          .setLabel('Continuar cadastro')
+          .setStyle(ButtonStyle.Primary),
+      )],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('cliente:etapa2:')) {
+    const formId = interaction.customId.split(':')[2];
+    const form = clienteForms.get(formId);
+    if (!form || form.expiresAt < Date.now() || form.userId !== interaction.user.id || !form.data) {
+      clienteForms.delete(formId);
+      await interaction.reply({ content: 'Este formulário expirou. Use /cliente para começar novamente.', ephemeral: true });
+      return;
+    }
+
+    let concentrador;
+    let migrate;
+    try {
+      concentrador = normalizeYesNo(interaction.fields.getTextInputValue('concentrador'), 'Usa concentrador?');
+      migrate = normalizeYesNo(interaction.fields.getTextInputValue('migrate'), 'Usa Migrate?');
+      form.data.nuvem = normalizeYesNo(form.data.nuvem, 'Cliente Nuvem?');
+    } catch (error) {
+      await interaction.reply({ content: error.message, ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const channel = await client.channels.fetch(form.channelId);
+      if (!channel || !channel.isTextBased() || !channel.send) {
+        throw new Error('O canal original não aceita mensagens.');
+      }
+
+      const site = formatWebsite(form.data.web);
+      const systemFields = [
+        ['Cliente Nuvem', formatYesNo(form.data.nuvem)],
+        ['Utiliza concentrador', formatYesNo(concentrador)],
+        ['Utiliza Migrate', formatYesNo(migrate)],
+      ].filter(([, value]) => value)
+        .map(([label, value]) => ({ name: `⚙️ ${label}`, value, inline: false }));
+      const cityAndState = interaction.fields.getTextInputValue('cidadeEstado').trim();
+      const clienteFields = [
+        { name: '🏷️ Código do cliente', value: form.data.codigo, inline: false },
+        { name: '🧾 CNPJ', value: form.data.cnpj, inline: false },
+        ...systemFields,
+        ...(cityAndState ? [{ name: '📍 Cidade e estado', value: cityAndState, inline: false }] : []),
+        { name: '👤 Técnico responsável', value: `<@${form.userId}>`, inline: false },
+        ...(site ? [{ name: '🌐 Site', value: site, inline: false }] : []),
+      ];
+      const spacedFields = clienteFields.flatMap((field, index) => (
+        index < clienteFields.length - 1
+          ? [field, { name: '\u200b', value: '\u200b', inline: false }]
+          : [field]
+      ));
+      const clienteEmbed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setAuthor({ name: 'Mel • Cadastro de cliente', iconURL: client.user.displayAvatarURL() })
+        .setTitle('🏢 Cadastro de cliente')
+        .setDescription(`**${form.data.fantasia}**`)
+        .addFields(spacedFields)
+        .setFooter({ text: `Cadastrado por ${interaction.user.tag}` })
+        .setTimestamp();
+
+      await channel.send({
+        embeds: [clienteEmbed],
+        ...(site ? { components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('cliente:copiar-site')
+            .setLabel('Copiar link do site')
+            .setStyle(ButtonStyle.Secondary),
+        )] } : {}),
+      });
+      clienteForms.delete(formId);
+      await interaction.editReply({ content: 'Cadastro do cliente enviado no canal.' });
+    } catch (error) {
+      console.error('Não foi possível publicar o cadastro do cliente:', error);
+      await interaction.editReply({ content: 'Não consegui publicar o cadastro no canal original. Confira as permissões do bot e tente novamente.' });
+    }
     return;
   }
 
